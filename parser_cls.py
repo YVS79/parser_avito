@@ -44,27 +44,55 @@ class AvitoParse:
         max_files = getattr(self.config, "log_max_files", 10)
         clean_old_logs("logs", max_age_days=retention_days, max_files=max_files)
 
-        self.proxy = build_proxy(self.config)
+        self.notifier = build_notifier(config=config)
+        self._notification_cooldowns: dict[str, float] = {}
+        self.proxy = build_proxy(
+            self.config,
+            stop_event=stop_event,
+            notify_event=self._notify_event,
+        )
         self.cookies_provider = build_cookies_provider(config=config, proxy=self.proxy)
         self.db_handler = SQLiteDBHandler()
-        self.notifier = build_notifier(config=config)
         self.result_storage = None
         self.url_converter = AvitoUrlConverter()
         self.stop_event = stop_event
         self.headers = HEADERS
         self.good_request_count = 0
         self.bad_request_count = 0
-        self.http = HttpClient(
-            proxy=self.proxy,
-            cookies=self.cookies_provider,
-            timeout=config.timeout,
-            max_retries=self.config.max_count_of_retry,
-            retry_delay=config.retry_delay,
-            block_threshold=config.block_threshold
-        )
+        try:
+            self.http = HttpClient(
+                proxy=self.proxy,
+                cookies=self.cookies_provider,
+                timeout=config.timeout,
+                max_retries=self.config.max_count_of_retry,
+                retry_delay=config.retry_delay,
+                block_threshold=config.block_threshold,
+                on_event=self._notify_event,
+            )
+        except Exception as error:
+            self._notify_event(
+                f"❌ Не удалось запустить парсер через модем: {error}"
+            )
+            raise
         self.ads_filter = AdsFilter(config=config, is_viewed_fn=self.is_viewed)
         log_config(config=self.config, version=VERSION)
 
+
+    def _notify_event(self, message: str) -> None:
+        """Отправить событие в VK/Telegram с защитой от спама."""
+        if self.stop_event is not None and self.stop_event.is_set():
+            return
+        now = time.time()
+        key = message[:80]
+        cooldown = 300 if message.startswith("❌") else 120
+        last_sent = self._notification_cooldowns.get(key)
+        if last_sent is not None and now - last_sent < cooldown:
+            return
+        self._notification_cooldowns[key] = now
+        try:
+            self.notifier.notify(message=message)
+        except Exception as error:
+            logger.warning(f"Не удалось отправить уведомление: {error}")
 
     def get_proxy_obj(self) -> Proxy | None:
         if all([self.config.proxy_string, self.config.proxy_change_url]):

@@ -93,18 +93,12 @@ def main(page: ft.Page):
         use_usb_modem.value = bool(getattr(config, "use_usb_modem", False))
         modem_gateway.value = getattr(config, "modem_gateway", "") or ""
         modem_password.value = getattr(config, "modem_password", "") or ""
-        strategy = getattr(config, "modem_rotation_strategy", "fast_then_mode")
+        strategy = getattr(config, "modem_rotation_strategy", "fast_then_reboot")
+        if strategy in {"fast_then_mode", "mode"}:
+            strategy = "fast_then_reboot"
         modem_strategy.value = (
-            strategy if strategy in {"fast_then_mode", "fast", "mode"}
-            else "fast_then_mode"
-        )
-        preferred = getattr(config, "modem_preferred_mode", "NETWORK_auto")
-        modem_preferred_mode.value = (
-            preferred if preferred in {
-                "NETWORK_auto", "Only_LTE", "Only_WCDMA", "Only_GSM",
-                "WCDMA_AND_LTE", "WCDMA_AND_GSM", "GSM_AND_LTE",
-                "WCDMA_preferred", "GSM_preferred",
-            } else "NETWORK_auto"
+            strategy if strategy in {"fast_then_reboot", "fast", "reboot"}
+            else "fast_then_reboot"
         )
         on_modem_toggle(None)
 
@@ -164,14 +158,14 @@ def main(page: ft.Page):
             "use_usb_modem": use_usb_modem.value,
             "modem_gateway": modem_gateway.value or "",
             "modem_password": modem_password.value or "",
-            "modem_rotation_strategy": modem_strategy.value or "fast_then_mode",
-            "modem_preferred_mode": modem_preferred_mode.value or "NETWORK_auto",
+            "modem_rotation_strategy": modem_strategy.value or "fast_then_reboot",
             "modem_local_ip": getattr(previous, "modem_local_ip", "") or "",
             "modem_interface": getattr(previous, "modem_interface", "") or "",
             "modem_fast_timeout": getattr(previous, "modem_fast_timeout", 8),
-            "modem_mode_timeout": getattr(previous, "modem_mode_timeout", 45),
             "modem_fast_attempts": getattr(previous, "modem_fast_attempts", 2),
-            "modem_reboot_on_fail": getattr(previous, "modem_reboot_on_fail", False),
+            "modem_reboot_on_fail": getattr(previous, "modem_reboot_on_fail", True),
+            "modem_reboot_timeout": getattr(previous, "modem_reboot_timeout", 120),
+            "modem_max_reboots": getattr(previous, "modem_max_reboots", 1),
             "modem_bind_interface": getattr(previous, "modem_bind_interface", True),
             "log_retention_days": getattr(previous, "log_retention_days", 5),
             "log_max_files": getattr(previous, "log_max_files", 10),
@@ -372,9 +366,8 @@ def main(page: ft.Page):
         config.use_usb_modem = True
         config.modem_gateway = modem_gateway.value or ""
         config.modem_password = modem_password.value or ""
-        config.modem_rotation_strategy = modem_strategy.value or "fast_then_mode"
-        config.modem_preferred_mode = (
-            modem_preferred_mode.value or "NETWORK_auto"
+        config.modem_rotation_strategy = (
+            modem_strategy.value or "fast_then_reboot"
         )
         return config
 
@@ -590,32 +583,17 @@ def main(page: ft.Page):
         tooltip=MODEM_PASSWORD_HELP,
     )
     modem_strategy = ft.Dropdown(
-        label="Способ смены IP",
-        width=280,
-        value="fast_then_mode",
+        label="Способ смены WAN IP",
+        width=320,
+        value="fast_then_reboot",
         options=[
-            ft.dropdown.Option("fast_then_mode", "Быстро, затем смена стандарта"),
+            ft.dropdown.Option(
+                "fast_then_reboot", "Быстро, затем перезагрузка модема"
+            ),
             ft.dropdown.Option("fast", "Только быстрое переподключение"),
-            ft.dropdown.Option("mode", "Только смена стандарта сети"),
+            ft.dropdown.Option("reboot", "Сразу перезагрузка модема"),
         ],
         tooltip=MODEM_STRATEGY_HELP,
-    )
-    modem_preferred_mode = ft.Dropdown(
-        label="Предпочтительный стандарт",
-        width=230,
-        value="NETWORK_auto",
-        options=[
-            ft.dropdown.Option("NETWORK_auto", "Авто (2G/3G/4G)"),
-            ft.dropdown.Option("Only_LTE", "Только 4G (LTE)"),
-            ft.dropdown.Option("Only_WCDMA", "Только 3G"),
-            ft.dropdown.Option("Only_GSM", "Только 2G"),
-            ft.dropdown.Option("WCDMA_AND_LTE", "3G + 4G"),
-            ft.dropdown.Option("WCDMA_AND_GSM", "3G + 2G"),
-            ft.dropdown.Option("GSM_AND_LTE", "2G + 4G"),
-            ft.dropdown.Option("WCDMA_preferred", "Предпочитать 3G"),
-            ft.dropdown.Option("GSM_preferred", "Предпочитать 2G"),
-        ],
-        tooltip=MODEM_PREFERRED_MODE_HELP,
     )
     btn_test_modem = ft.ElevatedButton(
         text="Проверить модем",
@@ -818,7 +796,13 @@ def main(page: ft.Page):
                                         content=ft.Column([
                                             ft.Row([use_usb_modem, btn_test_modem]),
                                             ft.Row([modem_gateway, modem_password]),
-                                            ft.Row([modem_strategy, modem_preferred_mode]),
+                                            ft.Row([modem_strategy]),
+                                            ft.Text(
+                                                "После смены IP модем остаётся в LTE; "
+                                                "переход на 3G не используется.",
+                                                size=11,
+                                                color=ft.colors.GREY_400,
+                                            ),
                                         ]),
                                         margin=ft.margin.only(left=25, top=5),
                                     ),

@@ -4,7 +4,7 @@
 Примеры:
     python scripts/modem_cli.py --status
     python scripts/modem_cli.py --rotate
-    python scripts/modem_cli.py --rotate --strategy mode --preferred Only_LTE
+    python scripts/modem_cli.py --rotate --strategy fast_then_reboot
     python scripts/modem_cli.py --rotate --repeat 3 --delay 2
 """
 from __future__ import annotations
@@ -38,18 +38,13 @@ def main() -> int:
         description="Проверка и смена IP USB 4G модема (ZTE MF823D)"
     )
     parser.add_argument("--config", default="config.toml", help="путь к config.toml")
-    parser.add_argument("--gateway", default=None, help="адрес модема, например 192.168.0.1")
+    parser.add_argument("--gateway", default=None, help="адрес модема, например 192.168.4.1")
     parser.add_argument("--password", default=None, help="пароль веб-интерфейса модема")
     parser.add_argument(
         "--strategy",
-        choices=("fast_then_mode", "fast", "mode"),
+        choices=("fast_then_reboot", "fast", "reboot"),
         default=None,
         help="способ смены IP",
-    )
-    parser.add_argument(
-        "--preferred",
-        default=None,
-        help="предпочтительный режим: NETWORK_auto, Only_LTE, Only_WCDMA, Only_GSM...",
     )
     parser.add_argument("--rotate", action="store_true", help="сменить IP")
     parser.add_argument("--repeat", type=int, default=1, help="сколько раз сменить IP")
@@ -64,9 +59,6 @@ def main() -> int:
         config.modem_password = args.password
     if args.strategy:
         config.modem_rotation_strategy = args.strategy
-    if args.preferred:
-        config.modem_preferred_mode = args.preferred
-
     service = ModemService(config)
     try:
         if not args.rotate:

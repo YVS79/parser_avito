@@ -21,6 +21,10 @@ class ModemCommandError(ModemError):
     """Модем отклонил команду управления."""
 
 
+class ModemTransportError(ModemCommandError):
+    """Связь с модемом прервалась (например, во время перезагрузки)."""
+
+
 @dataclass(frozen=True)
 class NetAdapter:
     """Сетевой адаптер, через который модем раздаёт интернет."""

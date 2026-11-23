@@ -56,6 +56,21 @@ def test_stop_event_set_preserves_event_object():
     assert parser.stop_event.is_set() is True
 
 
+def test_notify_event_is_throttled():
+    parser = AvitoParse.__new__(AvitoParse)
+    parser.stop_event = threading.Event()
+    parser.notifier = MagicMock()
+    parser._notification_cooldowns = {}
+
+    parser._notify_event("🚫 Avito блокирует запросы (HTTP 403)")
+    parser._notify_event("🚫 Avito блокирует запросы (HTTP 403)")
+
+    assert parser.notifier.notify.call_count == 1
+
+    parser._notify_event("❌ Не удалось сменить WAN IP модема")
+    assert parser.notifier.notify.call_count == 2
+
+
 def test_clean_null_ads():
     ad1 = Item(id=101)
     ad2 = Item(id=None)

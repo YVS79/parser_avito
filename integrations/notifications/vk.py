@@ -1,3 +1,5 @@
+import random
+
 import requests
 from loguru import logger
 
@@ -22,14 +24,30 @@ class VKNotifier(Notifier):
                 headers=headers,
                 data={
                     "user_id": self.user_id,
-                    "random_id": 0,
+                    "random_id": random.randint(1, 2**31 - 1),
                     "message": message,
                     "v": "5.199"
                 },
                 timeout=10,
             )
 
-        send_with_retries(_send)
+        response = send_with_retries(_send)
+        if response is None:
+            logger.warning("VK: не удалось отправить сообщение")
+            return
+        try:
+            body = response.json()
+        except ValueError:
+            logger.warning("VK: ответ API не является JSON")
+            return
+        if "error" in body:
+            logger.warning(
+                "VK API error %s: %s",
+                body["error"].get("error_code", 0),
+                body["error"].get("error_msg", "Unknown error"),
+            )
+        else:
+            logger.debug("VK: сообщение отправлено")
 
     def notify_ad(self, ad: Item):
         def _send():
@@ -42,7 +60,7 @@ class VKNotifier(Notifier):
                 attachment = self.__upload_photo_to_vk(_image_url, str(self.user_id))
             payload = {
                 "user_id": self.user_id,
-                "random_id": 0,
+                "random_id": random.randint(1, 2**31 - 1),
                 "message": message,
                 "v": "5.199"
             }

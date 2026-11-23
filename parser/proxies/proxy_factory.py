@@ -5,7 +5,7 @@ from .proxy import NoProxy, ServerProxy, MobileProxy, Proxy
 from .modem_proxy import UsbModemProxy
 
 
-def build_proxy(config: AvitoConfig) -> Proxy:
+def build_proxy(config: AvitoConfig, stop_event=None, notify_event=None) -> Proxy:
     """
     Определяет тип прокси
     """
@@ -16,7 +16,9 @@ def build_proxy(config: AvitoConfig) -> Proxy:
                 "Использую USB-модем, настройки прокси игнорируются."
             )
         logger.info("Трафик направляется через USB 4G модем")
-        return UsbModemProxy(config)
+        return UsbModemProxy(
+            config, stop_event=stop_event, notify_event=notify_event
+        )
 
     if config.proxy_change_url and not config.proxy_string:
         raise ValueError("proxy_change_url указан без proxy_string")

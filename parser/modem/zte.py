@@ -32,6 +32,7 @@ from .models import (
     ModemCommandError,
     ModemError,
     ModemStatus,
+    ModemTransportError,
 )
 
 # Допустимые значения BearerPreference (чувствительны к регистру).
@@ -224,7 +225,7 @@ class ZTEClient:
                 self._remember_stok()
                 return int(error.code), text
             except (urllib.error.URLError, TimeoutError, OSError) as error:
-                raise ModemCommandError(
+                raise ModemTransportError(
                     f"Нет связи с веб-интерфейсом модема {self.gateway}: {error}"
                 ) from error
 
@@ -383,8 +384,65 @@ class ZTEClient:
             )
         self._set_cmd("SET_BEARER_PREFERENCE", BearerPreference=mode)
 
-    def reboot(self) -> None:
-        self._set_cmd("REBOOT_DEVICE")
+    def reboot(self) -> bool:
+        """Отправить REBOOT_DEVICE.
+
+        При перезагрузке модем часто обрывает HTTP-соединение, не успевая
+        ответить. Такой обрыв считается нормальным: команда уже доставлена,
+        поэтому транспортная ошибка не пробрасывается. Если же модем явно
+        отклонил команду (result=failure), выбрасывается ModemCommandError.
+        """
+        try:
+            self._set_cmd("REBOOT_DEVICE")
+            logger.info("REBOOT_DEVICE: команда принята модемом")
+            return True
+        except ModemTransportError as error:
+            logger.info(
+                "REBOOT_DEVICE: связь с модемом оборвалась "
+                f"({error}) — это ожидаемо при перезагрузке"
+            )
+            return True
+
+    def cgi_available(self, timeout: float = 2.0) -> bool:
+        """Проверить, отвечает ли веб-интерфейс (CGI) модема.
+
+        Любой HTTP-ответ (включая 401/403) означает, что веб-сервер модема
+        уже поднялся. Транспортная ошибка означает, что шлюз ещё недоступен.
+        """
+        params = {
+            "isTest": "false",
+            "cmd": "wan_ipaddr",
+            "multi_data": "1",
+            "_": str(int(time.time() * 1000)),
+        }
+        try:
+            self._request(
+                "GET",
+                "goform/goform_get_cmd_process",
+                params=params,
+                timeout=max(0.3, timeout),
+            )
+            return True
+        except ModemError:
+            return False
+
+    def wait_for_cgi(
+        self,
+        timeout: float = 120.0,
+        interval: float = 1.0,
+        should_stop=None,
+    ) -> bool:
+        """Ждать восстановления CGI-шлюза после перезагрузки."""
+        deadline = time.monotonic() + max(0.0, timeout)
+        while True:
+            if should_stop is not None and should_stop():
+                return False
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            if self.cgi_available(timeout=min(2.0, max(0.3, remaining))):
+                return True
+            time.sleep(min(interval, max(0.0, deadline - time.monotonic())))
 
     def is_alive(self) -> bool:
         try:
@@ -400,6 +458,7 @@ class ZTEClient:
         timeout: float = 8.0,
         require_change: bool = True,
         interval: float = 0.2,
+        should_stop=None,
     ) -> Optional[str]:
         """Ждать подключения и (опционально) смены WAN IP.
 
@@ -409,6 +468,8 @@ class ZTEClient:
         deadline = time.monotonic() + max(0.0, timeout)
         last_error: Optional[Exception] = None
         while True:
+            if should_stop is not None and should_stop():
+                return None
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
@@ -427,10 +488,17 @@ class ZTEClient:
             logger.debug(f"Ожидание IP модема завершилось ошибкой: {last_error}")
         return None
 
-    def wait_for_disconnect(self, timeout: float = 1.5, interval: float = 0.1) -> bool:
+    def wait_for_disconnect(
+        self,
+        timeout: float = 1.5,
+        interval: float = 0.1,
+        should_stop=None,
+    ) -> bool:
         """Ждать, пока модем отпустит WAN-адрес (для быстрого реконнекта)."""
         deadline = time.monotonic() + max(0.0, timeout)
         while time.monotonic() < deadline:
+            if should_stop is not None and should_stop():
+                return False
             try:
                 if self.wan_ip(timeout=min(self.poll_timeout, 0.8)) is None:
                     return True

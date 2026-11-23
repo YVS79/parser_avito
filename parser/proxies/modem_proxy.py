@@ -18,17 +18,29 @@ class UsbModemProxy(Proxy):
     сокет к интерфейсу USB-модема и управляет модемом по CGI-API.
     """
 
-    def __init__(self, config):
+    def __init__(self, config, stop_event=None, notify_event=None):
         self.config = config
+        self.stop_event = stop_event
+        self.notify_event = notify_event
         self._service: Optional[ModemService] = None
         self._lock = threading.Lock()
+
+    def _emit(self, message: str) -> None:
+        if not self.notify_event:
+            return
+        try:
+            self.notify_event(message)
+        except Exception as error:
+            logger.warning(f"Не удалось отправить уведомление: {error}")
 
     def _ensure_started(self) -> ModemService:
         if self._service is not None:
             return self._service
         with self._lock:
             if self._service is None:
-                service = ModemService(self.config)
+                service = ModemService(
+                    self.config, stop_event=self.stop_event
+                )
                 try:
                     url = service.start()
                 except Exception:
@@ -42,7 +54,20 @@ class UsbModemProxy(Proxy):
         return self._ensure_started().proxy_url
 
     def handle_block(self) -> None:
-        self._ensure_started().rotate(reason="HTTP-блокировка Avito")
+        result = self._ensure_started().rotate(reason="HTTP-блокировка Avito")
+        if self.stop_event is not None and self.stop_event.is_set():
+            return
+        if result.ok:
+            self._emit(
+                "✅ WAN IP модема изменён: "
+                f"{result.old_ip or 'нет'} -> {result.new_ip} "
+                f"за {result.elapsed_ms / 1000:.1f} с."
+            )
+        else:
+            self._emit(
+                "❌ Не удалось сменить WAN IP модема: "
+                f"{result.error or 'неизвестная ошибка'}."
+            )
 
     def status_text(self) -> str:
         if self._service is None:

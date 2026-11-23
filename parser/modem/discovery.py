@@ -25,7 +25,12 @@ from .models import ModemAuthError, ModemEndpoint, ModemNotFoundError, NetAdapte
 from .zte import normalize_gateway
 
 # Шлюзы, которые ZTE использует по умолчанию в разных прошивках/операторах.
-ZTE_DEFAULT_GATEWAYS = ("192.168.0.1", "192.168.32.1", "192.168.254.1")
+ZTE_DEFAULT_GATEWAYS = (
+    "192.168.0.1",
+    "192.168.4.1",
+    "192.168.32.1",
+    "192.168.254.1",
+)
 
 _MODEM_NAME_KEYWORDS = (
     "zte",

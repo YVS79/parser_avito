@@ -34,6 +34,9 @@ _BUFFER_SIZE = 65536
 _MAX_HEADER = 65536
 _TUNNEL_IDLE_TIMEOUT = 120.0
 
+# Порядок важен: на разных сборках Windows рабочим оказывается разный вариант.
+EGRESS_MODES = ("iface_then_bind", "bind_then_iface", "iface_only")
+
 
 class RouteBinder:
     """Создаёт TCP-соединения через заданный сетевой интерфейс."""
@@ -43,13 +46,15 @@ class RouteBinder:
         ifindex: Optional[int] = None,
         local_ip: Optional[str] = None,
         interface_name: Optional[str] = None,
+        mode: str = "iface_then_bind",
     ):
         self.ifindex = ifindex
         self.local_ip = local_ip
         self.interface_name = interface_name
+        self.mode = mode if mode in EGRESS_MODES else "iface_then_bind"
 
     def __str__(self) -> str:
-        parts = []
+        parts = [f"режим={self.mode}"]
         if self.interface_name:
             parts.append(self.interface_name)
         if self.local_ip:
@@ -85,6 +90,32 @@ class RouteBinder:
             else:
                 logger.debug(message)
 
+    def _bind_local(self, sock: socket.socket) -> None:
+        if not self.local_ip:
+            return
+        try:
+            sock.bind((self.local_ip, 0))
+        except OSError as bind_error:
+            # При заданном IP_UNICAST_IF bind не обязателен, например если
+            # DHCP выдал модему новый адрес после перезагрузки.
+            if self.ifindex is None:
+                raise
+            logger.debug(
+                f"bind к {self.local_ip} не удался, "
+                f"продолжаю через интерфейс: {bind_error}"
+            )
+
+    def _apply_socket_setup(self, sock: socket.socket) -> None:
+        """Применить выбранный порядок привязки к интерфейсу и источнику."""
+        if self.mode == "bind_then_iface":
+            self._bind_local(sock)
+            self._apply_interface(sock)
+        elif self.mode == "iface_only":
+            self._apply_interface(sock)
+        else:  # iface_then_bind
+            self._apply_interface(sock)
+            self._bind_local(sock)
+
     def connect(
         self, host: str, port: int, timeout: float = 15.0
     ) -> socket.socket:
@@ -101,20 +132,20 @@ class RouteBinder:
             sock = socket.socket(family, socktype, proto)
             sock.settimeout(timeout)
             try:
-                self._apply_interface(sock)
-                if self.local_ip:
-                    try:
-                        sock.bind((self.local_ip, 0))
-                    except OSError as bind_error:
-                        # При заданном IP_UNICAST_IF bind не обязателен;
-                        # например, если DHCP выдал модему новый адрес.
-                        if self.ifindex is None:
-                            raise
-                        logger.debug(
-                            f"bind к {self.local_ip} не удался, "
-                            f"продолжаю через интерфейс: {bind_error}"
-                        )
+                self._apply_socket_setup(sock)
                 sock.connect(sockaddr)
+
+                # Проверяем, что соединение реально ушло с IP модема,
+                # а не через Ethernet/Wi-Fi.
+                if self.local_ip:
+                    actual_ip = sock.getsockname()[0]
+                    if actual_ip != self.local_ip:
+                        raise OSError(
+                            "Соединение ушло не через модем: "
+                            f"источник {actual_ip}, ожидался {self.local_ip} "
+                            f"(режим {self.mode})"
+                        )
+
                 sock.settimeout(None)
                 try:
                     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)

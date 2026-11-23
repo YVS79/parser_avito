@@ -6,10 +6,11 @@ from .models import (
     ModemError,
     ModemNotFoundError,
     ModemStatus,
+    ModemTransportError,
     NetAdapter,
     RotationResult,
 )
-from .service import ModemService, alternate_mode, preflight_modem
+from .service import ModemService, preflight_modem
 
 __all__ = [
     "ModemAuthError",
@@ -19,8 +20,8 @@ __all__ = [
     "ModemNotFoundError",
     "ModemService",
     "ModemStatus",
+    "ModemTransportError",
     "NetAdapter",
     "RotationResult",
-    "alternate_mode",
     "preflight_modem",
 ]

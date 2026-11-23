@@ -67,11 +67,15 @@ class AvitoConfig:
     modem_local_ip: Optional[str] = None
     modem_interface: Optional[str] = None
     modem_password: Optional[str] = None
-    modem_rotation_strategy: str = "fast_then_mode"
+    modem_rotation_strategy: str = "fast_then_reboot"
+    # Устарело: оставлено для чтения старых config.toml, в ротации не используется.
     modem_preferred_mode: str = "NETWORK_auto"
     modem_fast_timeout: int = 8
+    # Устарело: таймаут смены стандарта больше не применяется.
     modem_mode_timeout: int = 45
     modem_fast_attempts: int = 2
-    modem_reboot_on_fail: bool = False
+    modem_reboot_on_fail: bool = True
+    modem_reboot_timeout: int = 120
+    modem_max_reboots: int = 1
     modem_bind_interface: bool = True
 

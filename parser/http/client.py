@@ -91,6 +91,7 @@ class HttpClient:
         retry_delay: int = 5,
         block_threshold: int = 3,
         verify: str | bool | None = None,
+        on_event=None,
     ):
         self.proxy = proxy
         self.cookies = cookies
@@ -99,6 +100,7 @@ class HttpClient:
         self.retry_delay = retry_delay
         self.block_threshold = block_threshold
         self.verify = get_ca_bundle() if verify is None else verify
+        self.on_event = on_event
 
         self._block_attempts = 0
         self._client = self._build_client()
@@ -151,6 +153,14 @@ class HttpClient:
         self._client.close()
         self._client = self._build_client()
 
+    def _emit_event(self, message: str) -> None:
+        if not self.on_event:
+            return
+        try:
+            self.on_event(message)
+        except Exception as error:
+            logger.warning(f"Не удалось отправить уведомление: {error}")
+
     def _recover_session(self) -> None:
         """Сменить IP и обновить cookies в правильном порядке."""
         self.proxy.handle_block()
@@ -180,6 +190,12 @@ class HttpClient:
                         f"Запрос заблокирован ({response.status_code}) к {url}, "
                         f"попытка {self._block_attempts}"
                     )
+                    if self._block_attempts == 1:
+                        self._emit_event(
+                            "🚫 Avito блокирует запросы "
+                            f"(HTTP {response.status_code}). "
+                            "Пробую сменить WAN IP модема."
+                        )
 
                     if self._block_attempts >= self.block_threshold:
                         logger.warning("Достигнут лимит блокировок, запускается обработка")
@@ -220,6 +236,10 @@ class HttpClient:
                     self._recover_session()
                 time.sleep(self.retry_delay)
 
+        self._emit_event(
+            "❌ Не удалось получить ответ от Avito после "
+            f"{self.max_retries} попыток: {last_exc}"
+        )
         raise RuntimeError("HTTP запросы были неуспешными") from last_exc
 
     def fetch_item_data(self, item_id: int) -> dict:

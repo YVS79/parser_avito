@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import socket
 import threading
+
+import pytest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from parser.modem.egress import EgressProxy, RouteBinder
@@ -158,3 +160,17 @@ def test_proxy_stop_is_idempotent():
     proxy.stop()
     proxy.stop()
     assert proxy.port > 0
+
+
+@pytest.mark.parametrize("mode", ["bind_then_iface", "iface_only"])
+def test_route_binder_supported_modes(mode):
+    echo = _EchoServer()
+    echo.start()
+    try:
+        binder = RouteBinder(local_ip="127.0.0.1", mode=mode)
+        connection = binder.connect("127.0.0.1", echo.port, timeout=3.0)
+        connection.sendall(b"mode")
+        assert connection.recv(100) == b"mode"
+        connection.close()
+    finally:
+        echo.stop()

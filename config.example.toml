@@ -44,24 +44,24 @@ log_max_files = 10
 # --- USB 4G модем (ZTE MF823D и совместимые) ---
 # Работать через модем, даже если есть Wi-Fi/Ethernet.
 use_usb_modem = false
-# Адрес веб-интерфейса модема. Пусто = автоопределение (обычно 192.168.0.1).
+# Адрес веб-интерфейса модема. Пусто = автоопределение (192.168.0.1 / 192.168.4.1 / 192.168.32.1).
 modem_gateway = ""
 # Принудительно задать локальный IP/интерфейс модема (обычно не требуется).
 modem_local_ip = ""
 modem_interface = ""
 # Пароль веб-интерфейса модема, если он включён.
 modem_password = ""
-# fast_then_mode | fast | mode
-modem_rotation_strategy = "fast_then_mode"
-# NETWORK_auto | Only_LTE | Only_WCDMA | Only_GSM | WCDMA_AND_LTE ...
-modem_preferred_mode = "NETWORK_auto"
-# Сколько секунд ждать новый IP после быстрого переподключения.
+# fast_then_reboot | fast | reboot
+modem_rotation_strategy = "fast_then_reboot"
+# Сколько секунд ждать восстановление соединения после быстрого переподключения.
 modem_fast_timeout = 8
-# Сколько секунд ждать регистрацию после смены стандарта сети.
-modem_mode_timeout = 45
-# Сколько раз пробовать быстрое переподключение до смены стандарта.
+# Сколько раз пробовать быстрое переподключение до перезагрузки модема.
 modem_fast_attempts = 2
-# Перезагружать модем, если IP так и не изменился (медленно, крайняя мера).
-modem_reboot_on_fail = false
+# Перезагружать модем, если быстрый способ не изменил WAN IP.
+modem_reboot_on_fail = true
+# Сколько секунд ждать восстановления CGI, LTE и WAN IP после перезагрузки.
+modem_reboot_timeout = 120
+# Максимум перезагрузок за одну смену IP (0 = не перезагружать).
+modem_max_reboots = 1
 # Привязывать исходящие сокеты к интерфейсу модема (рекомендуется).
 modem_bind_interface = true

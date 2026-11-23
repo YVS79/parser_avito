@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
@@ -22,6 +23,11 @@ class _ZTEState:
         self.commands: list[str] = []
         self.login_attempts = 0
         self.ip_counter = 10
+        self.reboot_ip = "100.64.0.240"
+        self.down_until = 0.0
+        self.reboot_mode = "success"  # success | drop | failure
+        self.reboot_requests = 0
+        self.fast_returns_same_ip = False
 
     def next_ip(self) -> str:
         self.ip_counter += 1
@@ -89,12 +95,27 @@ def _make_handler(state: _ZTEState):
                 self._send({"result": "failure"}, code=403)
                 return
 
+            if command == "REBOOT_DEVICE":
+                state.reboot_requests += 1
+                if state.reboot_mode == "drop":
+                    state.down_until = time.monotonic() + 0.3
+                    self.connection.close()
+                    return
+                if state.reboot_mode == "failure":
+                    self._send({"result": "failure"})
+                    return
+                state.ip = state.reboot_ip
+                state.connected = True
+                state.down_until = time.monotonic() + 0.4
+                self._send({"result": "success"})
+                return
             if command == "DISCONNECT_NETWORK":
                 state.connected = False
                 self._send({"result": "success"})
             elif command == "CONNECT_NETWORK":
                 state.connected = True
-                state.ip = state.next_ip()
+                if not state.fast_returns_same_ip:
+                    state.ip = state.next_ip()
                 self._send({"result": "success"})
             elif command == "SET_BEARER_PREFERENCE":
                 state.bearer = (params.get("BearerPreference") or [""])[0]
@@ -103,6 +124,9 @@ def _make_handler(state: _ZTEState):
                 self._send({"result": "failure"})
 
         def do_GET(self):
+            if time.monotonic() < state.down_until:
+                self.connection.close()
+                return
             parts = urlsplit(self.path)
             query = parse_qs(parts.query)
             if parts.path.endswith("goform_get_cmd_process"):
@@ -113,6 +137,9 @@ def _make_handler(state: _ZTEState):
                 self._send({"result": "failure"}, code=404)
 
         def do_POST(self):
+            if time.monotonic() < state.down_until:
+                self.connection.close()
+                return
             length = int(self.headers.get("Content-Length") or 0)
             raw = self.rfile.read(length).decode("utf-8")
             params = parse_qs(raw)
@@ -157,8 +184,8 @@ def test_set_bearer_and_reconnect_are_sent(zte_server):
     state, gateway = zte_server
     client = ZTEClient(gateway, timeout=1.0, poll_timeout=0.5)
 
-    client.set_bearer("Only_WCDMA")
-    assert state.bearer == "Only_WCDMA"
+    client.set_bearer("Only_LTE")
+    assert state.bearer == "Only_LTE"
 
     old_ip = state.ip
     client.disconnect()
@@ -215,3 +242,89 @@ def test_normalize_ip():
     assert normalize_ip("0.0.0.0") is None
     assert normalize_ip("") is None
     assert normalize_ip("not-an-ip") is None
+
+
+def test_reboot_and_cgi_recovery(zte_server):
+    state, gateway = zte_server
+    client = ZTEClient(gateway, timeout=1.0, poll_timeout=0.5)
+    old_ip = state.ip
+
+    assert client.reboot() is True
+    assert state.reboot_requests == 1
+    assert client.wait_for_cgi(timeout=3.0, interval=0.05) is True
+
+    assert state.ip == state.reboot_ip
+    assert client.wan_ip() == state.reboot_ip
+    assert state.ip != old_ip
+
+
+def test_reboot_transport_error_is_tolerated(zte_server):
+    state, gateway = zte_server
+    state.reboot_mode = "drop"
+    client = ZTEClient(gateway, timeout=1.0, poll_timeout=0.5)
+
+    # При перезагрузке модем может оборвать HTTP-соединение — это не ошибка.
+    assert client.reboot() is True
+    assert state.reboot_requests == 1
+
+
+def test_reboot_rejection_raises(zte_server):
+    state, gateway = zte_server
+    state.reboot_mode = "failure"
+    client = ZTEClient(gateway, timeout=1.0, poll_timeout=0.5)
+
+    with pytest.raises(Exception):
+        client.reboot()
+
+
+def test_wait_for_cgi_tolerates_down_gateway(zte_server):
+    state, gateway = zte_server
+    state.down_until = time.monotonic() + 0.3
+    client = ZTEClient(gateway, timeout=1.0, poll_timeout=0.5)
+
+    assert client.wait_for_cgi(timeout=2.0, interval=0.05) is True
+
+
+def test_service_fast_then_reboot_via_cgi_emulator(zte_server, monkeypatch):
+    from dto import AvitoConfig
+    from parser.modem.models import ModemEndpoint, NetAdapter
+    from parser.modem import service as service_module
+
+    state, gateway = zte_server
+    state.fast_returns_same_ip = True
+    state.reboot_ip = "100.64.0.240"
+    old_ip = state.ip
+
+    config = AvitoConfig(
+        urls=[],
+        use_usb_modem=True,
+        modem_rotation_strategy="fast_then_reboot",
+        modem_fast_attempts=1,
+        modem_fast_timeout=1,
+        modem_reboot_timeout=5,
+        modem_max_reboots=1,
+    )
+    endpoint = ModemEndpoint(
+        gateway=gateway,
+        adapter=NetAdapter(name="lo", ipv4="127.0.0.1"),
+    )
+    monkeypatch.setattr(service_module, "_FAST_SETTLE_SECONDS", 0.0)
+    monkeypatch.setattr(
+        service_module, "find_modem_endpoint", lambda *args, **kwargs: endpoint
+    )
+
+    service = service_module.ModemService(
+        config,
+        endpoint=endpoint,
+        client=ZTEClient(gateway, timeout=1.0, poll_timeout=0.5),
+    )
+    try:
+        result = service.rotate("cgi-test")
+    finally:
+        service.close()
+
+    assert result.ok is True
+    assert result.strategy == "reboot"
+    assert result.old_ip == old_ip
+    assert result.new_ip == state.reboot_ip
+    assert state.reboot_requests == 1
