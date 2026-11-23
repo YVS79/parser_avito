@@ -42,9 +42,8 @@ _FAST_SETTLE_SECONDS = 2.0
 
 # Внешние адреса для проверки, что трафик реально уходит через модем.
 _EGRESS_CHECK_TARGETS = (
-    ("1.1.1.1", 443),
     ("www.avito.ru", 443),
-    ("api.ipify.org", 443),
+    ("1.1.1.1", 443),
 )
 
 
@@ -206,7 +205,7 @@ class ModemService:
             last_error: Optional[OSError] = None
             for host, port in _EGRESS_CHECK_TARGETS:
                 try:
-                    sock = binder.connect(host, port, timeout=4.0)
+                    sock = binder.connect(host, port, timeout=2.5)
                     try:
                         source_ip = sock.getsockname()[0]
                     finally:
@@ -232,7 +231,9 @@ class ModemService:
             "привязки не дал внешнего соединения. Парсер не запущен, чтобы "
             "не работать через Ethernet/Wi-Fi. Проверьте маршрут до "
             "192.168.4.1, отключите Ethernet/Wi-Fi или задайте "
-            "modem_local_ip/modem_interface. Детали: "
+            "modem_local_ip/modem_interface. Если включён VPN, настройте "
+            "split tunneling (исключите 192.168.4.0/24 и python.exe) "
+            "или отключите VPN: VPN может перехватывать трафик. Детали: "
             + "; ".join(errors)
         )
 
@@ -743,12 +744,21 @@ class ModemService:
                 self._proxy = None
 
 
-def preflight_modem(config) -> str:
-    """Проверить модем без запуска парсера (для GUI/CLI). Вернуть описание."""
+def preflight_modem(config, verify_egress: bool = True) -> str:
+    """Проверить модем без запуска парсера (для GUI/CLI). Вернуть описание.
+
+    verify_egress=False используется перед стартом из GUI: проверка выхода
+    через модем может занимать несколько секунд (а при VPN — до таймаутов),
+    поэтому её лучше выполнять в рабочем потоке парсера, а не в UI-потоке.
+    """
     service = ModemService(config)
     try:
         status = service.probe()
-        service.check_egress()
-        return status.describe() + f"\nРежим привязки: {service.route_mode or 'не проверен'}"
+        if verify_egress:
+            service.check_egress()
+        return (
+            status.describe()
+            + f"\nРежим привязки: {service.route_mode or 'не проверен'}"
+        )
     finally:
         service.close()

@@ -23,7 +23,7 @@ from integrations.notifications.factory import build_notifier
 from lang import *
 from load_config import save_avito_config, load_avito_config
 from parser_cls import AvitoParse
-from parser.modem import preflight_modem
+from parser.modem import ModemError, preflight_modem
 from utils import prompt_user_login
 from utils.log_cleanup import clean_old_logs
 from version import VERSION
@@ -301,6 +301,11 @@ def main(page: ft.Page):
                     config = load_avito_config("config.toml")
                     parser = AvitoParse(config, stop_event=stop_event)
                     parser.parse()
+                except ModemError as err:
+                    logger.error(f"Модем недоступен: {err}")
+                    stop_event.set()
+                    is_run = False
+                    break
                 except Exception as err:
                     logger.error(f"Ошибка в процессе парсинга: {err}")
 
@@ -387,7 +392,9 @@ def main(page: ft.Page):
     def check_modem():
         """Проверить модем перед запуском парсера."""
         try:
-            info = preflight_modem(_modem_config_from_ui())
+            info = preflight_modem(
+                _modem_config_from_ui(), verify_egress=False
+            )
         except Exception as err:
             dlg_modal = ft.AlertDialog(
                 modal=True,
